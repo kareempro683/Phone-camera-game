@@ -1,0 +1,24 @@
+name: Unzip game
+on: [push, workflow_dispatch]
+permissions:
+  contents: write
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          shopt -s nullglob
+          zips=(*.zip)
+          if [ ${#zips[@]} -gt 0 ]; then
+            mkdir -p tmp_unzip
+            for z in "${zips[@]}"; do unzip -o "$z" -d tmp_unzip; rm -f "$z"; done
+            src=$(dirname "$(find tmp_unzip -name index.html | head -1)")
+            cp -r "$src"/. .
+            rm -rf tmp_unzip
+            git config user.name "github-actions"
+            git config user.email "github-actions@users.noreply.github.com"
+            git add -A
+            git commit -m "Unzip game files"
+            git push
+          fi
