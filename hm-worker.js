@@ -1,9 +1,9 @@
-// Hand Magic background tracker (version 6).
+// Hand Magic background tracker (version 7).
 // Runs Google's MediaPipe Tasks in a background worker, so the screen never freezes.
 // Downloaded once from the internet, then kept on the phone by the offline helper.
 (() => {
 "use strict";
-const LIB = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21";
+const LIB = new URL("tasks", self.location.href).href; // kept on your own website, next to this file
 const MODELS = {
   hands: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
   seg: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
