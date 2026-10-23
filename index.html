@@ -123,7 +123,7 @@ video { display: none; }
   <button id="go">Start</button>
   <div id="status"></div>
   <div id="startBtns" hidden><button class="chip act" id="retryBtn">Try again</button> <button class="chip" id="fixBtn">Fix problems</button></div>
-  <div id="ver" style="color:var(--muted);font-size:12px">Version 7</div>
+  <div id="ver" style="color:var(--muted);font-size:12px">Version 8</div>
 </div>
 
 <script>
@@ -324,7 +324,7 @@ class OneEuro {
 // trackers: each one runs in its own frame (tracker.html), so they can't clash,
 // and a stuck or crashed tracker restarts by itself
 // =====================================================================
-const APP_VERSION = "7";
+const APP_VERSION = "8";
 let handRes = null, handResT = 0, handResId = 0;
 let segMask = null, segT = 0;
 let faceRes = null, faceT = 0;
@@ -1886,11 +1886,11 @@ requestAnimationFrame(loop);
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 // after the game is running, quietly save the other files so worlds and avatar also work offline
 const LATER = [
-  "tasks/vision_bundle.cjs", "tasks/wasm/vision_wasm_internal.js", "tasks/wasm/vision_wasm_internal.wasm",
+  "tasks/vision_bundle.js", "tasks/wasm/vision_wasm_internal.js", "tasks/wasm/vision_wasm_internal.wasm",
   "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
   "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
   "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite",
-  "hm-worker.js?v=7",
+  "hm-worker.js?v=8",
 ];
 function saveRestForOffline() {
   if (!("serviceWorker" in navigator) || !navigator.serviceWorker.controller) return;

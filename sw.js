@@ -1,8 +1,8 @@
 // Keeps Hand Magic working offline (version 6).
 // The page and small files: internet first, saved copy when offline.
 // Big tracker files (from Google's servers): saved copy first, they never change.
-const CACHE = "hand-magic-v7";
-const CORE = ["./", "index.html", "hm-worker.js?v=7", "manifest.json", "icon-192.png", "icon-512.png"];
+const CACHE = "hand-magic-v8";
+const CORE = ["./", "index.html", "hm-worker.js?v=8", "manifest.json", "icon-192.png", "icon-512.png"];
 const BIG_HOSTS = ["cdn.jsdelivr.net", "storage.googleapis.com"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(CORE.map(f => c.add(f).catch(() => {})))).then(() => self.skipWaiting()));

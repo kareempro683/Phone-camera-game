@@ -1,4 +1,4 @@
-// Hand Magic background tracker (version 7).
+// Hand Magic background tracker (version 8).
 // Runs Google's MediaPipe Tasks in a background worker, so the screen never freezes.
 // Downloaded once from the internet, then kept on the phone by the offline helper.
 (() => {
@@ -20,7 +20,7 @@ function loadLibrary() {
   if (V) return;
   self.exports = {};
   self.module = { exports: self.exports };
-  importScripts(LIB + "/vision_bundle.cjs");
+  importScripts(LIB + "/vision_bundle.js");
   V = self.module.exports && self.module.exports.FilesetResolver ? self.module.exports : self.exports;
   if (!V || !V.FilesetResolver) throw new Error("tracking library didn't load");
 }
