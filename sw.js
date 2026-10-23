@@ -1,28 +1,29 @@
-// Keeps Hand Magic working offline. The hand-tracking files are saved first;
-// the page saves the rest in the background once the game is running.
-const CACHE = "hand-magic-v5";
-const CORE = ["./", "index.html", "tracker.html", "manifest.json", "icon-192.png", "icon-512.png", "hands.js", "hands.binarypb", "hands_solution_packed_assets_loader.js", "hands_solution_packed_assets.data", "hands_solution_simd_wasm_bin.js", "hands_solution_simd_wasm_bin.wasm", "hand_landmark_full.tflite"];
+// Keeps Hand Magic working offline (version 6).
+// The page and small files: internet first, saved copy when offline.
+// Big tracker files (from Google's servers): saved copy first, they never change.
+const CACHE = "hand-magic-v6";
+const CORE = ["./", "index.html", "hm-worker.js?v=6", "manifest.json", "icon-192.png", "icon-512.png"];
+const BIG_HOSTS = ["cdn.jsdelivr.net", "storage.googleapis.com"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(CORE.map(f => c.add(f).catch(() => {})))).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
+function keep(req, res) {
+  if (res && (res.ok || res.type === "opaque")) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {}); }
+  return res;
+}
 self.addEventListener("fetch", e => {
-  if (e.request.method !== "GET") return;
-  const url = new URL(e.request.url);
-  // the page itself: always try the internet first so updates show up, use the saved copy when offline
-  if (e.request.mode === "navigate" || url.pathname.endsWith("/") || url.pathname.endsWith(".html") || url.pathname.endsWith("sw.js")) {
-    e.respondWith(fetch(e.request).then(res => {
-      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
-      return res;
-    }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(hit => hit || caches.match("index.html"))));
+  const req = e.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  const big = BIG_HOSTS.includes(url.hostname) || /\.(wasm|task|tflite|data|binarypb|png)$/.test(url.pathname);
+  if (big) {
+    e.respondWith(caches.match(req, { ignoreVary: true }).then(hit => hit || fetch(req).then(res => keep(req, res))));
     return;
   }
-  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => hit || fetch(e.request).then(res => {
-    if (res.ok && new URL(e.request.url).origin === location.origin) {
-      const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy));
-    }
-    return res;
-  })));
+  if (url.origin !== location.origin) return;
+  e.respondWith(fetch(req).then(res => keep(req, res)).catch(() =>
+    caches.match(req, { ignoreSearch: true }).then(hit => hit || caches.match("index.html"))));
 });
