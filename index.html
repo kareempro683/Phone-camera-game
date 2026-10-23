@@ -125,8 +125,6 @@ video { display: none; }
 </div>
 
 <script src="hands.js"></script>
-<script src="selfie_segmentation.js"></script>
-<script src="face_detection.js"></script>
 <script>
 "use strict";
 // =====================================================================
@@ -331,8 +329,9 @@ let segMask = null, segT = 0;
 let faceRes = null, faceT = 0;
 let busy = false, tick = 0;
 
-function needSeg() { return S.world !== "None" || S.filter === 2 || selfShield > now; }
-function needFace() { return S.hat || S.eyes || S.ears || S.face || S.neck; }
+const HAS_SEG = typeof SelfieSegmentation !== "undefined", HAS_FACE = typeof FaceDetection !== "undefined";
+function needSeg() { return HAS_SEG && (S.world !== "None" || S.filter === 2 || selfShield > now); }
+function needFace() { return HAS_FACE && (S.hat || S.eyes || S.ears || S.face || S.neck); }
 
 async function initHands() {
   handsAPI = new Hands({ locateFile: loc });
@@ -1007,6 +1006,9 @@ function drawBackground() {
     camLayer(pctx);
     pctx.globalCompositeOperation = "source-over";
     ctx.drawImage(personLayer, 0, 0);
+  } else if (S.world !== "None" && !HAS_SEG) {
+    drawWorld(S.world);
+    ctx.save(); ctx.globalAlpha = .5; camLayer(ctx); ctx.restore();
   } else if (f === 2 && segMask) {
     drawVideo(ctx, "brightness(.6) saturate(.6)");
     pctx.globalCompositeOperation = "copy";
@@ -1680,6 +1682,7 @@ function loop(t) {
 // =====================================================================
 document.getElementById("go").addEventListener("click", async () => {
   const go = document.getElementById("go");
+  if (window.__hmFailed) { location.reload(); return; }
   go.disabled = true;
   audioInit();
   try {
@@ -1693,17 +1696,10 @@ document.getElementById("go").addEventListener("click", async () => {
     status("Loading hand tracking... (first time takes a little while)");
     await initHands();
   } catch (e) {
-    console.warn(e);
-    try {
-      status("Trying the lighter hand tracking...");
-      try { handsAPI && handsAPI.close && handsAPI.close(); } catch (x) {}
-      S.quality = 0; save();
-      await initHands();
-    } catch (e2) {
-      const why = (e2 && (e2.message || e2.name)) || String(e2);
-      status("Hand tracking couldn't load: " + why + ". Send this message to Claude.");
-      go.disabled = false; return;
-    }
+    const why = (e && (e.message || e.name)) || String(e);
+    window.__hmFailed = true;
+    status("Hand tracking couldn't load: " + why + ". Close the tab, open the link again, and send this to Claude if it repeats.");
+    go.disabled = false; return;
   }
   document.getElementById("start").hidden = true;
   document.getElementById("world").textContent = S.world === "None" ? "Camera" : S.world;
