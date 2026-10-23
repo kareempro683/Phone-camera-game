@@ -1693,20 +1693,38 @@ document.getElementById("go").addEventListener("click", async () => {
     status("Loading hand tracking... (first time takes a little while)");
     await initHands();
   } catch (e) {
-    status("Hand tracking couldn't load. Check your connection the first time, then try again.");
-    go.disabled = false; return;
+    console.warn(e);
+    try {
+      status("Trying the lighter hand tracking...");
+      try { handsAPI && handsAPI.close && handsAPI.close(); } catch (x) {}
+      S.quality = 0; save();
+      await initHands();
+    } catch (e2) {
+      const why = (e2 && (e2.message || e2.name)) || String(e2);
+      status("Hand tracking couldn't load: " + why + ". Send this message to Claude.");
+      go.disabled = false; return;
+    }
   }
   document.getElementById("start").hidden = true;
   document.getElementById("world").textContent = S.world === "None" ? "Camera" : S.world;
   if (!worldNames().includes(S.world)) S.world = "None";
   S.tab = ""; renderSheet();
   try { await navigator.wakeLock.request("screen"); } catch (e) {}
+  setTimeout(saveRestForOffline, 20000);
 });
 addEventListener("resize", resize);
 resize();
 renderSheet();
 requestAnimationFrame(loop);
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+// after the game is running, quietly save the other files so worlds and avatar also work offline
+const LATER = ["face_detection.js", "face_detection_full.binarypb", "face_detection_full_range_sparse.tflite", "face_detection_short.binarypb", "face_detection_short_range.tflite", "face_detection_solution_simd_wasm_bin.data", "face_detection_solution_simd_wasm_bin.js", "face_detection_solution_simd_wasm_bin.wasm", "face_detection_solution_wasm_bin.js", "face_detection_solution_wasm_bin.wasm", "hand_landmark_lite.tflite", "hands_solution_simd_wasm_bin.data", "hands_solution_wasm_bin.js", "hands_solution_wasm_bin.wasm", "selfie_segmentation.binarypb", "selfie_segmentation.js", "selfie_segmentation.tflite", "selfie_segmentation_landscape.tflite", "selfie_segmentation_solution_simd_wasm_bin.data", "selfie_segmentation_solution_simd_wasm_bin.js", "selfie_segmentation_solution_simd_wasm_bin.wasm", "selfie_segmentation_solution_wasm_bin.js", "selfie_segmentation_solution_wasm_bin.wasm"];
+function saveRestForOffline() {
+  if (!("serviceWorker" in navigator) || !navigator.serviceWorker.controller) return;
+  let i = 0;
+  const next = () => { if (i >= LATER.length) return; fetch(LATER[i++]).catch(() => {}).finally(() => setTimeout(next, 300)); };
+  next();
+}
 </script>
 </body>
 </html>
