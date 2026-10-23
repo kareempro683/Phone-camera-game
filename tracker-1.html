@@ -1,0 +1,91 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Hand Magic tracker</title></head>
+<body>
+<script>
+// Each tracker runs alone in its own frame, so the three trackers can never clash.
+"use strict";
+const q = new URLSearchParams(location.search);
+const T = q.get("t");
+const FILES = { hands: "hands.js", seg: "selfie_segmentation.js", face: "face_detection.js" };
+const cv = document.createElement("canvas");
+const g = cv.getContext("2d");
+let api = null, ready = false, busy = false, gotResult = false;
+
+function post(m, transfer) {
+  m.tracker = T;
+  try { parent.postMessage(m, "*", transfer || []); } catch (e) { parent.postMessage({ tracker: T, type: "error", msg: String(e) }, "*"); }
+}
+function fail(msg) { post({ type: "error", msg: String(msg && (msg.message || msg.name) || msg) }); }
+
+window.addEventListener("error", e => fail(e.message || "script error"));
+window.addEventListener("unhandledrejection", e => fail(e.reason || "promise error"));
+
+async function onResults(r) {
+  gotResult = true;
+  try {
+    if (T === "hands") {
+      post({
+        type: "result",
+        hands: (r.multiHandLandmarks || []).map(l => l.map(p => [p.x, p.y])),
+        labels: (r.multiHandedness || []).map(h => (h && (h.label || (h.classification && h.classification[0] && h.classification[0].label))) || ""),
+      });
+    } else if (T === "seg") {
+      if (!r.segmentationMask) return;
+      const bmp = await createImageBitmap(r.segmentationMask);
+      post({ type: "result", mask: bmp }, [bmp]);
+    } else if (T === "face") {
+      const d = r.detections && r.detections[0];
+      const lm = d && (d.landmarks || d.keypoints);
+      post({ type: "result", face: lm ? lm.map(p => [p.x, p.y]) : null });
+    }
+  } catch (e) { fail(e); }
+}
+
+async function start() {
+  try {
+    const locateFile = f => f;
+    if (T === "hands") {
+      api = new Hands({ locateFile });
+      api.setOptions({ maxNumHands: 2, modelComplexity: +(q.get("c") || 1), minDetectionConfidence: .6, minTrackingConfidence: .5 });
+    } else if (T === "seg") {
+      api = new SelfieSegmentation({ locateFile });
+      api.setOptions({ modelSelection: 1 });
+    } else if (T === "face") {
+      api = new FaceDetection({ locateFile });
+      api.setOptions({ model: "short", minDetectionConfidence: .5 });
+    } else return fail("unknown tracker " + T);
+    api.onResults(onResults);
+    await api.initialize();
+    ready = true;
+    post({ type: "ready" });
+  } catch (e) { fail(e); }
+}
+
+window.addEventListener("message", async e => {
+  const m = e.data;
+  if (!m || m.to !== T) return;
+  if (m.options && api) { try { api.setOptions(m.options); } catch (x) {} return; }
+  if (!m.frame) return;
+  if (!ready || busy) { if (m.frame.close) m.frame.close(); post({ type: "done", skipped: true }); return; }
+  busy = true;
+  try {
+    const f = m.frame;
+    const w = f.width, h = f.height;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    if (f instanceof ImageData) g.putImageData(f, 0, 0); else { g.drawImage(f, 0, 0); if (f.close) f.close(); }
+    gotResult = false;
+    await api.send({ image: cv });
+    if (T === "hands" && !gotResult) post({ type: "result", hands: [], labels: [] });
+  } catch (err) { fail(err); }
+  busy = false;
+  post({ type: "done" });
+});
+
+const s = document.createElement("script");
+s.src = FILES[T];
+s.onload = start;
+s.onerror = () => fail("couldn't load " + FILES[T] + " (is it uploaded?)");
+document.head.appendChild(s);
+post({ type: "alive" });
+</script>
+</body></html>
