@@ -77,7 +77,7 @@ video { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: no
 <div id="top">
   <span class="pill" id="hint">Loading...</span>
   <span class="grow"></span>
-  <span class="pill" id="fps" hidden></span>
+  <span class="pill" id="fps"></span>
 </div>
 
 <div id="bar">
@@ -112,14 +112,14 @@ video { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: no
   <button id="go">Start</button>
   <div id="status"></div>
   <div id="startBtns" hidden><button class="b" id="retryBtn">Try again</button> <button class="b" id="fixBtn">Fix problems</button></div>
-  <div id="ver">Simple version 2</div>
+  <div id="ver">Simple version 3</div>
 </div>
 
 <script>
 "use strict";
-const VERSION = "simple-2";
+const VERSION = "simple-3";
 // ---------------- settings (remembered on this phone)
-const S = { draw: 1, mode: 0, hands: 2, size: 1, skel: { h: 285, s: .8, v: 1, rb: 0 }, pen: { h: 180, s: 1, v: 1, rb: 0 }, cam: "user" };
+const S = { draw: 1, mode: 0, hands: 1, size: 1, skel: { h: 285, s: .8, v: 1, rb: 0 }, pen: { h: 180, s: 1, v: 1, rb: 0 }, cam: "user" };
 try { const s = JSON.parse(localStorage.getItem("hm-simple") || "{}"); for (const k in s) if (k in S) S[k] = (typeof S[k] === "object") ? Object.assign(S[k], s[k]) : s[k]; } catch (e) {}
 const save = () => { try { localStorage.setItem("hm-simple", JSON.stringify(S)); } catch (e) {} };
 
@@ -139,9 +139,9 @@ const ink = document.createElement("canvas"), ictx = ink.getContext("2d");
 const video = document.getElementById("v");
 let W = 0, H = 0, DPR = 1, map = { s: 1, ox: 0, oy: 0, dw: 0, dh: 0 };
 function resize() {
-  DPR = Math.min(devicePixelRatio || 1, 2);
+  DPR = Math.min(devicePixelRatio || 1, 1.5);
   let w = Math.round(innerWidth * DPR), h = Math.round(innerHeight * DPR);
-  const k = Math.min(1, 1400 / Math.max(w, h)); w = Math.round(w * k); h = Math.round(h * k);
+  const k = Math.min(1, 1000 / Math.max(w, h)); w = Math.round(w * k); h = Math.round(h * k);
   if (w === W && h === H) return;
   let old = null; try { if (W) old = ictx.getImageData(0, 0, W, H); } catch (e) {}
   W = cv.width = ink.width = w; H = cv.height = ink.height = h;
@@ -157,7 +157,7 @@ const toPx = (nx, ny) => [(mirror() ? 1 - nx : nx) * map.dw + map.ox, ny * map.d
 addEventListener("resize", resize);
 
 // ---------------- background tracker
-let resultCount = 0, worker = null, trackerReady = false, waiting = false, sentAt = 0, restarts = 0, lastHands = [], lastResultAt = 0;
+let prevHands = [], prevResultAt = 0, rateTimes = [], resultCount = 0, worker = null, trackerReady = false, waiting = false, sentAt = 0, restarts = 0, lastHands = [], lastResultAt = 0;
 const problems = [];
 const frameCv = document.createElement("canvas"), fctx = frameCv.getContext("2d", { willReadFrequently: true });
 let onReady = null, onFail = null;
@@ -171,7 +171,7 @@ function startWorker() {
     else if (m.type === "ready") { trackerReady = true; worker.postMessage({ maxHands: S.hands }); onReady && onReady(m.backend); }
     else if (m.type === "fail") { onFail && onFail(m.msg); }
     else if (m.type === "error") { problems.push(m.msg); if (problems.length > 5) problems.shift(); }
-    else if (m.type === "result") { waiting = false; if (!m.skipped) { lastHands = m.hands; lastResultAt = performance.now(); resultCount++; } }
+    else if (m.type === "result") { waiting = false; if (!m.skipped) { prevHands = lastHands; prevResultAt = lastResultAt; lastHands = m.hands; lastResultAt = performance.now(); resultCount++; rateTimes.push(lastResultAt); } }
   };
   worker.onerror = e => { if (e.preventDefault) e.preventDefault(); problems.push("helper crashed: " + (e.message || "")); restartWorker(); };
 }
@@ -204,19 +204,32 @@ class Smooth {
     const al = c => 1 / (1 + 1 / (2 * Math.PI * c * dt));
     for (let i = 0; i < a.length; i++) {
       const d = (a[i] - this.x[i]) / dt; this.d[i] += al(1) * (d - this.d[i]);
-      this.x[i] += al(4 + .03 * Math.abs(this.d[i]) / DPR) * (a[i] - this.x[i]);
+      this.x[i] += al(6 + .05 * Math.abs(this.d[i]) / DPR) * (a[i] - this.x[i]);
     }
     return this.x.slice();
   }
 }
 let tracks = []; // {f: Smooth, pts, seen, pen}
+function predicted() {
+  // move each hand ahead along its recent motion, so the skeleton keeps up with your real hand
+  const t = performance.now();
+  if (t - lastResultAt > 500) return [];
+  const gap = lastResultAt - prevResultAt;
+  const ahead = Math.min(t - lastResultAt + gap * .5, 160);
+  return lastHands.map(h => {
+    if (!(gap > 0 && gap < 400)) return h;
+    let best = null, bd = Infinity;
+    for (const q of prevHands) { const d = Math.hypot(q[0][0] - h[0][0], q[0][1] - h[0][1]); if (d < bd) { bd = d; best = q; } }
+    if (!best || bd > .2) return h;
+    return h.map((p, i) => [p[0] + (p[0] - best[i][0]) / gap * ahead, p[1] + (p[1] - best[i][1]) / gap * ahead]);
+  });
+}
 function updateHands() {
-  const fresh = performance.now() - lastResultAt < 500 ? lastHands : [];
+  const fresh = predicted();
   const out = [];
   const free = tracks.slice();
   for (const h of fresh) {
     const px = h.map(([x, y]) => toPx(x, y));
-    // match with the nearest hand from before, so each hand keeps its own pen
     let best = null, bd = Infinity;
     for (const t of free) { const d = Math.hypot(t.pts[0][0] - px[0][0], t.pts[0][1] - px[0][1]); if (d < bd) { bd = d; best = t; } }
     if (!best || bd > W * .35) best = { f: new Smooth(), pts: px, pen: null };
@@ -225,7 +238,7 @@ function updateHands() {
     best.pts = []; for (let i = 0; i < 21; i++) best.pts.push([flat[i * 2], flat[i * 2 + 1]]);
     best.seen = now; out.push(best);
   }
-  for (const t of free) if (now - (t.seen || 0) < .25) out.push(t); // keep briefly to avoid flicker
+  for (const t of free) if (now - (t.seen || 0) < .25) out.push(t);
   tracks = out;
 }
 
@@ -235,15 +248,24 @@ const undo = [];
 function pushUndo() { try { undo.push(ictx.getImageData(0, 0, W, H)); if (undo.length > 12) undo.shift(); } catch (e) {} }
 function drawSkeleton(t) {
   const p = t.pts, w = [3, 5, 8][S.size] * DPR;
-  ctx.save(); ctx.lineCap = "round"; ctx.globalCompositeOperation = "lighter";
-  for (const [a, b] of BONES) {
-    const c = colorOf(S.skel, a * 12);
-    ctx.strokeStyle = css(c, .25); ctx.lineWidth = w * 3.2; ctx.beginPath(); ctx.moveTo(...p[a]); ctx.lineTo(...p[b]); ctx.stroke();
-    ctx.strokeStyle = css(c, .95); ctx.lineWidth = w; ctx.stroke();
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const one = !S.skel.rb;
+  if (one) {
+    const c = colorOf(S.skel);
+    ctx.beginPath(); for (const [a, b] of BONES) { ctx.moveTo(...p[a]); ctx.lineTo(...p[b]); }
+    ctx.strokeStyle = css(c, .3); ctx.lineWidth = w * 3; ctx.stroke();
+    ctx.strokeStyle = css(c); ctx.lineWidth = w; ctx.stroke();
+  } else {
+    for (const [a, b] of BONES) {
+      const c = colorOf(S.skel, a * 12);
+      ctx.beginPath(); ctx.moveTo(...p[a]); ctx.lineTo(...p[b]);
+      ctx.strokeStyle = css(c, .3); ctx.lineWidth = w * 3; ctx.stroke();
+      ctx.strokeStyle = css(c); ctx.lineWidth = w; ctx.stroke();
+    }
   }
-  ctx.restore();
-  ctx.fillStyle = "#fff";
-  for (const q of p) { ctx.beginPath(); ctx.arc(q[0], q[1], w * .45, 0, 6.283); ctx.fill(); }
+  ctx.fillStyle = "#fff"; ctx.beginPath();
+  for (const q of p) { ctx.moveTo(q[0] + w * .45, q[1]); ctx.arc(q[0], q[1], w * .45, 0, 6.283); }
+  ctx.fill();
 }
 function fingerUp(p, tip, pip) { return Math.hypot(p[tip][0] - p[0][0], p[tip][1] - p[0][1]) > Math.hypot(p[pip][0] - p[0][0], p[pip][1] - p[0][1]) * 1.12; }
 function wantsToDraw(t) {
@@ -280,7 +302,11 @@ let fpsN = 0, fpsT = 0;
 function loop(ms) {
   requestAnimationFrame(loop);
   now = ms / 1000;
-  if (++fpsN && now - fpsT > 1) { document.getElementById("fps").textContent = fpsN + " fps"; fpsN = 0; fpsT = now; }
+  if (++fpsN && now - fpsT > 1) {
+    const t = performance.now(); rateTimes = rateTimes.filter(x => t - x < 2000);
+    document.getElementById("fps").textContent = "Speed " + Math.round(rateTimes.length / 2) + (crossOriginIsolated ? " · all cores" : "");
+    fpsN = 0; fpsT = now;
+  }
   if (!video.videoWidth) return;
   if (Math.abs(map.dw / map.s - video.videoWidth) > 1) fitVideo();
   try {
@@ -421,7 +447,17 @@ $("go").onclick = async () => {
 };
 
 resize(); paintBar(); requestAnimationFrame(loop);
-if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").then(() => navigator.serviceWorker.ready).then(() => {
+    // the helper switches on "all cores" mode; it needs one reload to take effect
+    let tried = false; try { tried = sessionStorage.getItem("coi") === "1"; } catch (e) {}
+    if (!crossOriginIsolated && !tried && $("start").hidden === false && !starting) {
+      try { sessionStorage.setItem("coi", "1"); } catch (e) {}
+      if (navigator.serviceWorker.controller) location.reload();
+      else navigator.serviceWorker.addEventListener("controllerchange", () => location.reload(), { once: true });
+    }
+  }).catch(() => {});
+}
 </script>
 </body>
 </html>

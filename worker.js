@@ -109,7 +109,7 @@ async function track(f) {
   // look for new hands only when we're missing one (and not too often)
   let found = false;
   const now = performance.now();
-  const wait = tracks.length === 0 ? 0 : 1500;
+  const wait = tracks.length === 0 ? 250 : 4000;
   if (tracks.length < maxHands && now - lastFind > wait) {
     lastFind = now; found = true;
     const r = await human.detect(f);
