@@ -1,7 +1,7 @@
 // Hand Magic Simple: saves everything on the phone so it works offline.
 // Page and code: internet first (so updates show), saved copy when offline. Models: saved copy first.
-const CACHE = "hand-magic-simple-1";
-const FILES = ["./", "index.html", "worker.js?v=simple-1", "manifest.json", "icon-192.png", "icon-512.png", "lib/human.js", "lib/tfjs-backend-wasm.wasm", "lib/tfjs-backend-wasm-simd.wasm", "models/handtrack.json", "models/handtrack.bin", "models/handlandmark-lite.json", "models/handlandmark-lite.bin"];
+const CACHE = "hand-magic-simple-2";
+const FILES = ["./", "index.html", "worker.js?v=simple-2", "manifest.json", "icon-192.png", "icon-512.png", "lib/human.js", "lib/tfjs-backend-wasm.wasm", "lib/tfjs-backend-wasm-simd.wasm", "models/handtrack.json", "models/handtrack.bin", "models/handlandmark-lite.json", "models/handlandmark-lite.bin"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(FILES.map(f => c.add(f).catch(() => {})))).then(() => self.skipWaiting()));
 });

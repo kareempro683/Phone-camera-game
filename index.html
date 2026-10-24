@@ -75,7 +75,7 @@ video { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: no
 <video id="v" playsinline muted autoplay></video>
 
 <div id="top">
-  <span class="pill" id="hint">Pinch your thumb and finger to draw</span>
+  <span class="pill" id="hint">Loading...</span>
   <span class="grow"></span>
   <span class="pill" id="fps" hidden></span>
 </div>
@@ -84,7 +84,9 @@ video { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: no
   <button class="b" id="drawBtn">✏️ Drawing: On</button>
   <button class="b" id="skelBtn"><span class="dot" id="skelDot"></span>Skeleton</button>
   <button class="b" id="penBtn"><span class="dot" id="penDot"></span>Pen</button>
+  <button class="b" id="modeBtn">Draw with: Finger</button>
   <button class="b" id="sizeBtn">Size: M</button>
+  <button class="b" id="handsBtn">Hands: 2</button>
   <button class="b" id="undoBtn">Undo</button>
   <button class="b" id="clearBtn">Clear</button>
   <button class="b" id="flipBtn">⟲</button>
@@ -110,14 +112,14 @@ video { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: no
   <button id="go">Start</button>
   <div id="status"></div>
   <div id="startBtns" hidden><button class="b" id="retryBtn">Try again</button> <button class="b" id="fixBtn">Fix problems</button></div>
-  <div id="ver">Simple version 1</div>
+  <div id="ver">Simple version 2</div>
 </div>
 
 <script>
 "use strict";
-const VERSION = "simple-1";
+const VERSION = "simple-2";
 // ---------------- settings (remembered on this phone)
-const S = { draw: 1, size: 1, skel: { h: 285, s: .8, v: 1, rb: 0 }, pen: { h: 180, s: 1, v: 1, rb: 0 }, cam: "user" };
+const S = { draw: 1, mode: 0, hands: 2, size: 1, skel: { h: 285, s: .8, v: 1, rb: 0 }, pen: { h: 180, s: 1, v: 1, rb: 0 }, cam: "user" };
 try { const s = JSON.parse(localStorage.getItem("hm-simple") || "{}"); for (const k in s) if (k in S) S[k] = (typeof S[k] === "object") ? Object.assign(S[k], s[k]) : s[k]; } catch (e) {}
 const save = () => { try { localStorage.setItem("hm-simple", JSON.stringify(S)); } catch (e) {} };
 
@@ -155,7 +157,7 @@ const toPx = (nx, ny) => [(mirror() ? 1 - nx : nx) * map.dw + map.ox, ny * map.d
 addEventListener("resize", resize);
 
 // ---------------- background tracker
-let worker = null, trackerReady = false, waiting = false, sentAt = 0, restarts = 0, lastHands = [], lastResultAt = 0;
+let resultCount = 0, worker = null, trackerReady = false, waiting = false, sentAt = 0, restarts = 0, lastHands = [], lastResultAt = 0;
 const problems = [];
 const frameCv = document.createElement("canvas"), fctx = frameCv.getContext("2d", { willReadFrequently: true });
 let onReady = null, onFail = null;
@@ -166,10 +168,10 @@ function startWorker() {
   worker.onmessage = e => {
     const m = e.data || {};
     if (m.type === "progress") status(m.msg);
-    else if (m.type === "ready") { trackerReady = true; onReady && onReady(m.backend); }
+    else if (m.type === "ready") { trackerReady = true; worker.postMessage({ maxHands: S.hands }); onReady && onReady(m.backend); }
     else if (m.type === "fail") { onFail && onFail(m.msg); }
     else if (m.type === "error") { problems.push(m.msg); if (problems.length > 5) problems.shift(); }
-    else if (m.type === "result") { waiting = false; if (!m.skipped) { lastHands = m.hands; lastResultAt = performance.now(); } }
+    else if (m.type === "result") { waiting = false; if (!m.skipped) { lastHands = m.hands; lastResultAt = performance.now(); resultCount++; } }
   };
   worker.onerror = e => { if (e.preventDefault) e.preventDefault(); problems.push("helper crashed: " + (e.message || "")); restartWorker(); };
 }
@@ -184,7 +186,7 @@ function restartWorker() {
 function sendFrame() {
   if (!trackerReady || !worker || !video.videoWidth) return;
   if (waiting) { if (performance.now() - sentAt > 8000) restartWorker(); return; }
-  const vw = video.videoWidth, vh = video.videoHeight, k = Math.min(1, 320 / Math.max(vw, vh));
+  const vw = video.videoWidth, vh = video.videoHeight, k = Math.min(1, 384 / Math.max(vw, vh));
   const w = Math.round(vw * k), h = Math.round(vh * k);
   if (frameCv.width !== w || frameCv.height !== h) { frameCv.width = w; frameCv.height = h; }
   fctx.drawImage(video, 0, 0, w, h);
@@ -202,7 +204,7 @@ class Smooth {
     const al = c => 1 / (1 + 1 / (2 * Math.PI * c * dt));
     for (let i = 0; i < a.length; i++) {
       const d = (a[i] - this.x[i]) / dt; this.d[i] += al(1) * (d - this.d[i]);
-      this.x[i] += al(1.4 + .01 * Math.abs(this.d[i]) / DPR) * (a[i] - this.x[i]);
+      this.x[i] += al(4 + .03 * Math.abs(this.d[i]) / DPR) * (a[i] - this.x[i]);
     }
     return this.x.slice();
   }
@@ -243,17 +245,32 @@ function drawSkeleton(t) {
   ctx.fillStyle = "#fff";
   for (const q of p) { ctx.beginPath(); ctx.arc(q[0], q[1], w * .45, 0, 6.283); ctx.fill(); }
 }
-function handleDrawing(t) {
+function fingerUp(p, tip, pip) { return Math.hypot(p[tip][0] - p[0][0], p[tip][1] - p[0][1]) > Math.hypot(p[pip][0] - p[0][0], p[pip][1] - p[0][1]) * 1.12; }
+function wantsToDraw(t) {
   const p = t.pts, size = Math.hypot(p[0][0] - p[9][0], p[0][1] - p[9][1]) || 1;
-  const pinch = S.draw && Math.hypot(p[4][0] - p[8][0], p[4][1] - p[8][1]) < size * .32;
-  const tip = [(p[4][0] + p[8][0]) / 2, (p[4][1] + p[8][1]) / 2];
-  if (!pinch) { t.pen = null; return false; }
+  if (S.mode === 0) {
+    // pointing: index finger out, middle and ring fingers folded
+    return fingerUp(p, 8, 6) && !fingerUp(p, 12, 10) && !fingerUp(p, 16, 14);
+  }
+  const d = Math.hypot(p[4][0] - p[8][0], p[4][1] - p[8][1]) / size;
+  return t.pinched ? d < .55 : d < .35; // easier to keep a pinch than to start one
+}
+function handleDrawing(t) {
+  const p = t.pts;
+  const want = S.draw && wantsToDraw(t);
+  // only switch after it's been steady for a moment, so it doesn't flicker
+  if (want !== t.pinched) { t.flipAt = t.flipAt || now; if (now - t.flipAt > .08) { t.pinched = want; t.flipAt = 0; } }
+  else t.flipAt = 0;
+  const tip = S.mode === 0 ? p[8] : [(p[4][0] + p[8][0]) / 2, (p[4][1] + p[8][1]) / 2];
+  if (!t.pinched) { t.pen = null; t.lastMid = null; return false; }
   if (!t.pen) { pushUndo(); t.pen = tip; }
   const c = colorOf(S.pen), bw = [5, 10, 18][S.size] * DPR;
+  const mid = [(t.pen[0] + tip[0]) / 2, (t.pen[1] + tip[1]) / 2];
   ictx.lineCap = ictx.lineJoin = "round";
-  ictx.strokeStyle = css(c, .25); ictx.lineWidth = bw * 2.6; ictx.beginPath(); ictx.moveTo(...t.pen); ictx.lineTo(...tip); ictx.stroke();
+  ictx.beginPath(); ictx.moveTo(...(t.lastMid || t.pen)); ictx.quadraticCurveTo(t.pen[0], t.pen[1], mid[0], mid[1]);
+  ictx.strokeStyle = css(c, .25); ictx.lineWidth = bw * 2.6; ictx.stroke();
   ictx.strokeStyle = css(c); ictx.lineWidth = bw; ictx.stroke();
-  t.pen = tip;
+  t.lastMid = mid; t.pen = tip;
   ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * DPR; ctx.beginPath(); ctx.arc(tip[0], tip[1], bw * .8 + 4, 0, 6.283); ctx.stroke();
   return true;
 }
@@ -276,7 +293,7 @@ function loop(ms) {
     let drawing = false;
     for (const t of tracks) { drawSkeleton(t); if (handleDrawing(t)) drawing = true; }
     document.getElementById("hint").textContent = !trackerReady ? "Loading hand tracking..." :
-      !tracks.length ? "Show your hand to the camera" : !S.draw ? "Drawing is off" : drawing ? "Drawing..." : "Pinch your thumb and finger to draw";
+      !tracks.length ? "Show your hand to the camera" : !S.draw ? "Drawing is off" : drawing ? "Drawing..." : S.mode === 0 ? "Point your finger to draw, open your hand to stop" : "Pinch your thumb and finger to draw";
   } catch (e) { problems.push(e.message); }
 }
 
@@ -286,11 +303,15 @@ function paintBar() {
   $("drawBtn").textContent = "✏️ Drawing: " + (S.draw ? "On" : "Off");
   $("drawBtn").classList.toggle("on", !!S.draw);
   $("sizeBtn").textContent = "Size: " + ["S", "M", "L"][S.size];
+  $("modeBtn").textContent = "Draw with: " + (S.mode === 0 ? "Finger" : "Pinch");
+  $("handsBtn").textContent = "Hands: " + S.hands;
   $("skelDot").style.background = S.skel.rb ? "conic-gradient(red,yellow,lime,cyan,blue,magenta,red)" : css(hsv(S.skel.h, S.skel.s, S.skel.v));
   $("penDot").style.background = S.pen.rb ? "conic-gradient(red,yellow,lime,cyan,blue,magenta,red)" : css(hsv(S.pen.h, S.pen.s, S.pen.v));
 }
 $("drawBtn").onclick = () => { S.draw ^= 1; save(); paintBar(); toast(S.draw ? "Drawing on" : "Drawing off"); };
 $("sizeBtn").onclick = () => { S.size = (S.size + 1) % 3; save(); paintBar(); };
+$("modeBtn").onclick = () => { S.mode ^= 1; save(); paintBar(); toast(S.mode === 0 ? "Point your finger to draw" : "Pinch to draw"); };
+$("handsBtn").onclick = () => { S.hands = S.hands === 2 ? 1 : 2; save(); paintBar(); if (worker) worker.postMessage({ maxHands: S.hands }); toast(S.hands === 1 ? "1 hand (faster)" : "2 hands"); };
 $("undoBtn").onclick = () => { const im = undo.pop(); if (im) ictx.putImageData(im, 0, 0); else toast("Nothing to undo"); };
 $("clearBtn").onclick = () => { pushUndo(); ictx.clearRect(0, 0, W, H); toast("Cleared"); };
 $("flipBtn").onclick = () => { S.cam = S.cam === "user" ? "environment" : "user"; save(); openCamera().catch(e => toast(cameraMsg(e))); };
