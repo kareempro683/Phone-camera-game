@@ -4,9 +4,8 @@
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",
-  "orientation": "any",
-  "background_color": "#07060f",
-  "theme_color": "#07060f",
+  "background_color": "#0b0a16",
+  "theme_color": "#0b0a16",
   "icons": [
     {
       "src": "icon-192.png",
@@ -16,8 +15,7 @@
     {
       "src": "icon-512.png",
       "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/png"
     }
   ]
 }
