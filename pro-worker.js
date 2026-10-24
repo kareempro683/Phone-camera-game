@@ -3,7 +3,7 @@
 (() => {
 "use strict";
 const base = new URL("./", self.location.href).href;
-let H = null, hHands = null, hFace = null, tf = null, lm = null, busy = false;
+let H = null, hHands = null, hFace = null, hBody = null, tf = null, lm = null, busy = false;
 let maxHands = 2, tracks = [], nextId = 1, lastFind = -1e9, frameNo = 0;
 let src = null, sctx = null, crop = null, cctx = null;
 const SZ = 224;
@@ -46,6 +46,13 @@ async function load() {
       // face + background load quietly afterwards
       try { hFace = new H(faceConfig(backend)); await hFace.load(); say({ type: "extras" }); }
       catch (e) { hFace = null; say({ type: "error", msg: "avatar/worlds didn't load: " + why(e) }); }
+      try {
+        hBody = new H(Object.assign({ backend, wasmPath: base + "lib/", modelBasePath: base + "models/", debug: false, async: true, warmup: "none",
+          face: { enabled: false }, hand: { enabled: false }, segmentation: { enabled: false },
+          body: { enabled: true, modelPath: "movenet-lightning.json", maxDetected: 1, minConfidence: 0.2, skipFrames: 0 } },
+          { filter: { enabled: false }, object: { enabled: false }, gesture: { enabled: false } }));
+        await hBody.load(); say({ type: "body" });
+      } catch (e) { hBody = null; say({ type: "error", msg: "whole body didn't load: " + why(e) }); }
       return;
     } catch (e) { say({ type: "progress", msg: backend + " didn't work: " + why(e) }); hHands = null; }
   }
@@ -84,7 +91,8 @@ async function follow(t) {
 }
 const palm = p => [(p[0][0] + p[5][0] + p[9][0] + p[17][0]) / 4, (p[0][1] + p[5][1] + p[9][1] + p[17][1]) / 4];
 const span = p => Math.hypot(p[0][0] - p[9][0], p[0][1] - p[9][1]) || 1;
-const overlaps = (a, b) => { const pa = palm(a), pb = palm(b); return Math.hypot(pa[0] - pb[0], pa[1] - pb[1]) < Math.max(span(a), span(b)) * 0.9; };
+// two hands only count as the same hand if they are almost on top of each other (so two fists held together both stay)
+const overlaps = (a, b) => { const pa = palm(a), pb = palm(b); return Math.hypot(pa[0] - pb[0], pa[1] - pb[1]) < Math.max(span(a), span(b)) * 0.35; };
 async function hands(f) {
   if (!cctx) {
     const r = await hHands.detect(f);
@@ -97,7 +105,7 @@ async function hands(f) {
   tracks = [];
   for (const t of kept) if (!tracks.some(o => overlaps(o.pts, t.pts))) tracks.push(t);
   const now = performance.now();
-  if (tracks.length < maxHands && now - lastFind > (tracks.length ? 2500 : 200)) {
+  if (tracks.length < maxHands && now - lastFind > (tracks.length ? 600 : 150)) {
     lastFind = now;
     const r = await hHands.detect(f);
     for (const h of (r.hand || [])) {
@@ -116,6 +124,15 @@ async function face(f) {
   if (!m || m.length < 455) return null;
   const mid = (a, b) => [(m[a][0] + m[b][0]) / 2, (m[a][1] + m[b][1]) / 2];
   return [mid(33, 133), mid(362, 263), [m[1][0], m[1][1]], [m[13][0], m[13][1]], [m[234][0], m[234][1]], [m[454][0], m[454][1]]];
+}
+// ---- whole body: 17 points (nose, eyes, ears, shoulders, elbows, wrists, hips, knees, ankles)
+async function body(f) {
+  const r = await hBody.detect(f);
+  const b = r.body && r.body[0];
+  if (!b || !b.keypoints) return null;
+  const order = ["nose", "leftEye", "rightEye", "leftEar", "rightEar", "leftShoulder", "rightShoulder", "leftElbow", "rightElbow", "leftWrist", "rightWrist", "leftHip", "rightHip", "leftKnee", "rightKnee", "leftAnkle", "rightAnkle"];
+  const by = {}; for (const k of b.keypoints) by[k.part] = k;
+  return order.map(n => by[n] ? [by[n].position[0] / f.width, by[n].position[1] / f.height, by[n].score] : [0, 0, 0]);
 }
 // ---- background: a see-through picture where you are solid
 async function background(f) {
@@ -139,10 +156,17 @@ self.onmessage = async e => {
   try {
     const t0 = performance.now();
     res.hands = (await hands(f)).map(h => ({ id: h.id, pts: h.pts.map(([x, y]) => [x / f.width, y / f.height]) }));
-    // face and background take turns, so hand tracking stays quick
-    const turn = frameNo % 3;
-    if (hFace && m.face && (turn === 1 || (!m.seg && turn === 2))) { const p = await face(f); res.face = p ? p.map(([x, y]) => [x / f.width, y / f.height]) : null; }
-    else if (hFace && m.seg && (turn === 2 || (!m.face && turn === 1))) res.mask = await background(f);
+    // face, background and whole body take turns, so hand tracking stays quick
+    const jobs = [];
+    if (hFace && m.face) jobs.push("face");
+    if (hFace && m.seg) jobs.push("seg");
+    if (hBody && m.body) jobs.push("body", "body");
+    if (jobs.length) {
+      const job = jobs[frameNo % jobs.length];
+      if (job === "face") { const p = await face(f); res.face = p ? p.map(([x, y]) => [x / f.width, y / f.height]) : null; }
+      else if (job === "seg") res.mask = await background(f);
+      else res.body = await body(f);
+    }
     res.ms = Math.round(performance.now() - t0);
   } catch (err) { tracks = []; say({ type: "error", msg: why(err) }); res.hands = []; }
   busy = false;

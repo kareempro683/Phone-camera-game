@@ -111,7 +111,7 @@ video { display: none; }
 <div id="help">
   <b>Open hand</b> power · <b>Flick</b> throw · <b>Fist</b> weapon · <b>Two fists together</b> big weapon<br>
   <b>Point up</b> guard orb (throw it, or close your fist to shield yourself) · <b>Point right hand</b> blast orb<br>
-  <b>Finger gun</b> then drop your thumb to shoot · <b>Pinch</b> to draw · Click targets to pop them
+  <b>Finger gun</b> shoots · <b>Click</b> or <b>Space</b> throws/shoots where you want · <b>Pinch</b> to draw
 </div>
 <div id="toast"></div>
 <div id="saveBox" hidden></div>
@@ -124,7 +124,7 @@ video { display: none; }
   <button id="go">Start</button>
   <div id="status"></div>
   <div id="startBtns" hidden><button class="chip act" id="retryBtn">Try again</button> <button class="chip" id="fixBtn">Fix problems</button></div>
-  <div id="ver" style="color:var(--muted);font-size:12px">Laptop version 1</div>
+  <div id="ver" style="color:var(--muted);font-size:12px">Laptop version 2</div>
 </div>
 
 <script>
@@ -134,9 +134,9 @@ video { display: none; }
 // =====================================================================
 const DEF = {
   tab: "", cam: "user", quality: 1, mirror: 1,
-  style: 3, size: 1, glow: 1, smooth: 1, trails: 0, sparkles: 0,
+  track: 1, style: 3, size: 1, glow: 1, smooth: 1, trails: 0, sparkles: 0, aim: 1,
   open: 1, guard: 1, blast: 1, throw: 1, clap: 1, pcolor: 0,
-  fist2: 1, fist1: 0, gun: 1, bomb: 0,
+  fist2: 1, fist1: 0, gun: 1, trigger: 0, bomb: 0,
   world: "None", filter: 0, signs: 0, gshow: 0,
   gmap: { "Peace": "Galaxy", "Rock": "Lava", "Three": "Ocean", "Thumbs up": "Storm", "Shaka": "Crystal" },
   draw: 0, touchdraw: 0, brush: 1, bsize: 1,
@@ -170,7 +170,8 @@ const PICKS = { hat: HATS, eyes: EYES, ears: EARS, face: FACES, neck: NECKS };
 const OPEN = ["None", "Fire", "Ice", "Lightning", "Water", "Stars", "Energy", "Bomb"];
 const TWO = ["Off", "Random", "Greatsword", "Axe", "Hammer", "Spear", "Scythe", "Laser sword"];
 const ONE = ["None", "Sword", "Dagger", "Axe", "Hammer", "Torch", "Laser sword"];
-const GUNS = ["Off", "Blaster", "Laser", "Shotgun", "Rocket", "Bubble"];
+const GUNS = ["Off", "Blaster", "Laser", "Shotgun", "Rocket", "Bubble", "Minigun", "Sniper", "Flamethrower", "Freeze ray", "Plasma", "Water", "Lightning", "Grenade"];
+const GUN_RATE = { Blaster: .22, Laser: .35, Shotgun: .7, Rocket: 1, Bubble: .3, Minigun: .06, Sniper: 1.1, Flamethrower: .03, "Freeze ray": .45, Plasma: .5, Water: .04, Lightning: .3, Grenade: .9 };
 const BOMBS = ["Bomb", "Firework", "Freeze", "Sticky", "Black hole", "Confetti"];
 let photos = []; // {name, img}
 
@@ -325,7 +326,7 @@ class OneEuro {
 // trackers: hands, face and background all run in one background helper
 // (pro-worker.js), on the processor only, so the screen never freezes
 // =====================================================================
-const APP_VERSION = "pro-1";
+const APP_VERSION = "pro-2";
 let handRes = null, handResT = 0, handResId = 0;
 let segMask = null, segT = 0;
 let faceRes = null, faceT = 0;
@@ -335,7 +336,7 @@ function noteProblem(where, msg) {
   if (problems[problems.length - 1] === line) return;
   problems.push(line); if (problems.length > 8) problems.shift();
 }
-let worker = null, workerRestarts = 0, trackerReady = false, extrasReady = false, waiting = false, sentAt = 0, rateTimes = [];
+let bodyRes = null, bodyT = 0, bodyReady = false, worker = null, workerRestarts = 0, trackerReady = false, extrasReady = false, waiting = false, sentAt = 0, rateTimes = [];
 let onReady = null, onFail = null;
 function startWorker() {
   trackerReady = false; waiting = false;
@@ -346,12 +347,14 @@ function startWorker() {
     if (m.type === "progress") status(m.msg);
     else if (m.type === "ready") { trackerReady = true; worker.postMessage({ maxHands: 2 }); onReady && onReady(); }
     else if (m.type === "extras") { extrasReady = true; }
+    else if (m.type === "body") { bodyReady = true; }
     else if (m.type === "fail") { onFail && onFail(m.msg); }
     else if (m.type === "error") noteProblem("Tracker", m.msg);
     else if (m.type === "result") {
       waiting = false;
       if (m.skipped) return;
       handRes = m.hands || []; handResT = performance.now() / 1000; handResId++; rateTimes.push(performance.now());
+      if (m.body !== undefined) { bodyRes = m.body; bodyT = now; }
       if (m.face !== undefined) { faceRes = m.face ? { detections: [{ landmarks: m.face.map(([x, y]) => ({ x, y })) }] } : { detections: [] }; faceT = now; }
       if (m.mask) {
         let mk = m.mask;
@@ -381,7 +384,7 @@ function sendFrame() {
   frameCtx.drawImage(video, 0, 0, w, h);
   let img; try { img = frameCtx.getImageData(0, 0, w, h); } catch (e) { return; }
   waiting = true; sentAt = performance.now();
-  worker.postMessage({ frame: img, face: needFace(), seg: needSeg() }, [img.data.buffer]);
+  worker.postMessage({ frame: img, face: needFace(), seg: needSeg(), body: S.track === 2, maxHands: S.track === 0 ? 1 : 2 }, [img.data.buffer]);
 }
 const segOK = () => extrasReady;
 function needSeg() { return S.world !== "None" || S.filter === 2 || selfShield > now; }
@@ -737,6 +740,21 @@ function melee(kind, hilt, base, d, size, a, c) {
 // =====================================================================
 // guns
 // =====================================================================
+const GUN_LOOK = { // length, body color
+  Blaster: [1.5, "#2e3240"], Laser: [2.3, "#e8ecf4"], Shotgun: [2.1, "#5b3b23"], Rocket: [2.2, "#3e5a3a"], Bubble: [1.4, "#ff8fd0"],
+  Minigun: [2.0, "#4a4f5c"], Sniper: [3.0, "#30363f"], Flamethrower: [2.0, "#8a3a1c"], "Freeze ray": [1.8, "#bfe8ff"], Plasma: [1.9, "#3a1f5c"],
+  Water: [1.6, "#2fa8ff"], Lightning: [1.8, "#262a3a"], Grenade: [1.9, "#3d4a2a"],
+};
+function aimAssist(m, dir) {
+  if (!S.aim || !targets.length) return dir;
+  let best = null, bestA = .35; // about 20 degrees
+  for (const t of targets) {
+    const v = [t.x - m[0], t.y - m[1]], n = Math.hypot(...v) || 1;
+    const a = Math.acos(Math.max(-1, Math.min(1, (v[0] * dir[0] + v[1] * dir[1]) / n)));
+    if (a < bestA) { bestA = a; best = [v[0] / n, v[1] / n]; }
+  }
+  return best || dir;
+}
 function drawGun(hd, kind, recoil) {
   const p = hd.p, s = hd.size;
   let d = [p[8][0] - p[5][0], p[8][1] - p[5][1]]; const n = Math.hypot(d[0], d[1]) || 1; d = [d[0] / n, d[1] / n];
@@ -744,40 +762,83 @@ function drawGun(hd, kind, recoil) {
   const side = (p[4][0] - p[5][0]) * q[0] + (p[4][1] - p[5][1]) * q[1] > 0 ? 1 : -1; // thumb side is "up"
   const up = [q[0] * side, q[1] * side];
   const back = [p[5][0] - d[0] * s * (.4 + recoil), p[5][1] - d[1] * s * (.4 + recoil)];
-  const L = { Blaster: 1.5, Laser: 2.3, Shotgun: 2.1, Rocket: 2.2, Bubble: 1.4 }[kind] * s;
+  const [len, bodyC] = GUN_LOOK[kind] || GUN_LOOK.Blaster;
+  const L = len * s;
   const P = (k, u) => [back[0] + d[0] * k + up[0] * u, back[1] + d[1] * k + up[1] * u];
   const c = col("fx");
   if (kind === "Rocket") {
-    fillPoly([P(0, s * .1), P(L, s * .1), P(L, s * .55), P(0, s * .55)], "#3e5a3a", "#1d2b1b", 2 * DPR);
+    fillPoly([P(0, s * .1), P(L, s * .1), P(L, s * .55), P(0, s * .55)], bodyC, "#1d2b1b", 2 * DPR);
     fillPoly([P(L, s * .05), P(L + s * .15, -s * .02), P(L + s * .15, s * .68), P(L, s * .6)], "#2b3d29");
   } else if (kind === "Bubble") {
-    fillPoly([P(0, s * .05), P(L, s * .12), P(L, s * .32), P(0, s * .38)], "#ff8fd0", "#a8467c", 2 * DPR);
+    fillPoly([P(0, s * .05), P(L, s * .12), P(L, s * .32), P(0, s * .38)], bodyC, "#a8467c", 2 * DPR);
     ctx.fillStyle = "rgba(140,220,255,.7)"; ctx.beginPath(); ctx.arc(...P(L * .35, s * .62), s * .28, 0, 6.283); ctx.fill();
+  } else if (kind === "Minigun") {
+    for (let k = 0; k < 3; k++) { const o = Math.sin(now * 40 + k * 2.1) * s * .08; strokePath([P(L * .3, s * (.12 + k * .1) + o), P(L * 1.05, s * (.12 + k * .1) + o)], s * .07, "#9aa1ad"); }
+    fillPoly([P(0, s * .02), P(L * .4, s * .02), P(L * .4, s * .42), P(0, s * .42)], bodyC, "#111", 2 * DPR);
+  } else if (kind === "Sniper") {
+    fillPoly([P(0, s * .1), P(L, s * .16), P(L, s * .26), P(0, s * .36)], bodyC, "#111", 2 * DPR);
+    fillPoly([P(L * .3, -s * .02), P(L * .55, -s * .02), P(L * .55, s * .1), P(L * .3, s * .1)], "#151820");
+    ctx.save(); ctx.globalCompositeOperation = "lighter"; strokePath([P(L, s * .21), P(L + W, s * .21)], 1.5 * DPR, "rgba(255,40,40,.5)"); ctx.restore();
+  } else if (kind === "Flamethrower") {
+    fillPoly([P(0, s * .02), P(L, s * .1), P(L, s * .34), P(0, s * .42)], bodyC, "#111", 2 * DPR);
+    ctx.fillStyle = "#c94b1c"; ctx.beginPath(); ctx.arc(...P(L * .4, s * .7), s * .25, 0, 6.283); ctx.fill();
+  } else if (kind === "Water") {
+    fillPoly([P(0, s * .02), P(L, s * .1), P(L, s * .3), P(0, s * .42)], bodyC, "#0a4f8a", 2 * DPR);
+    ctx.fillStyle = "#ffd23c"; ctx.beginPath(); ctx.arc(...P(L * .45, s * .62), s * .2, 0, 6.283); ctx.fill();
   } else {
-    const bodyC = kind === "Laser" ? "#e8ecf4" : kind === "Shotgun" ? "#5b3b23" : "#2e3240";
     fillPoly([P(0, s * .02), P(L, s * .08), P(L, s * .34), P(0, s * .42)], bodyC, "#111", 2 * DPR);
-    if (kind === "Shotgun") strokePath([P(L * .2, s * .2), P(L * 1.05, s * .2)], s * .1, "#2b2b2b");
+    if (kind === "Shotgun" || kind === "Grenade") strokePath([P(L * .2, s * .2), P(L * 1.05, s * .2)], s * (kind === "Grenade" ? .2 : .1), "#2b2b2b");
+    const glow = kind === "Freeze ray" ? [120, 220, 255] : kind === "Plasma" ? [200, 90, 255] : kind === "Lightning" ? [255, 240, 120] : c;
     ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
-    strokePath([P(L * .15, s * .22), P(L * .85, s * .22)], s * .07, rgba(c, .9)); ctx.restore();
+    strokePath([P(L * .15, s * .22), P(L * .85, s * .22)], s * .07, rgba(glow, .9)); ctx.restore();
   }
   fillPoly([P(s * .05, s * .02), P(s * .45, s * .02), P(s * .3, -s * .55), P(-s * .05, -s * .5)], "#1e2029");
   return { muzzle: P(L + s * .1, s * .22), dir: d };
 }
 function fire(kind, m, dir, s) {
+  dir = aimAssist(m, dir);
   const sp = Math.min(W, H) * 2.2;
   const c = col("fx");
-  flashAt(m, c);
-  if (kind === "Laser") {
-    const far = [m[0] + dir[0] * W * 2, m[1] + dir[1] * W * 2];
-    beams.push({ a: m, b: far, life: .18, c });
-    for (const t of targets.slice()) if (segDist([t.x, t.y], m, far) < t.r) hit(t, c);
-    sfx("laser"); return;
+  const beam = (len, color, width, life, onHit) => {
+    const far = [m[0] + dir[0] * len, m[1] + dir[1] * len];
+    beams.push({ a: m, b: far, life, c: color, w: width });
+    for (const t of targets.slice()) if (segDist([t.x, t.y], m, far) < t.r) onHit(t);
+  };
+  if (kind !== "Flamethrower" && kind !== "Water") flashAt(m, c);
+  if (kind === "Laser") { beam(W * 2, c, 6, .18, t => hit(t, c)); sfx("laser"); return; }
+  if (kind === "Sniper") { beam(W * 3, [255, 60, 60], 4, .25, t => { t.shield = false; hit(t, [255, 60, 60]); }); flash = Math.max(flash, .05); sfx("boom"); return; }
+  if (kind === "Freeze ray") { beam(W * 1.2, [140, 225, 255], 9, .25, t => { t.frozen = now + 4; t.shield = false; }); sfx("laser"); return; }
+  if (kind === "Lightning") {
+    const far = [m[0] + dir[0] * W, m[1] + dir[1] * W];
+    let hitT = null, bd = Infinity;
+    for (const t of targets) { const d = segDist([t.x, t.y], m, far); if (d < t.r * 2.5 && d < bd) { bd = d; hitT = t; } }
+    const end = hitT ? [hitT.x, hitT.y] : far;
+    for (let k = 0; k < 2; k++) glowPath(jagged(m, end, 10, s * .3), 3 * DPR, [255, 240, 140]);
+    if (hitT) {
+      hit(hitT, [255, 240, 140]);
+      const next = targets.find(t => t !== hitT && Math.hypot(t.x - end[0], t.y - end[1]) < W * .25);
+      if (next) { glowPath(jagged(end, [next.x, next.y], 8, s * .3), 3 * DPR, [255, 240, 140]); hit(next, [255, 240, 140]); }
+    }
+    sfx("zap"); return;
   }
   if (kind === "Shotgun") {
     for (let i = -2; i <= 2; i++) { const a = Math.atan2(dir[1], dir[0]) + i * .09; shots.push({ k: "bolt", x: m[0], y: m[1], vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: s * .1, life: .6, c }); }
     sfx("boom"); return;
   }
-  if (kind === "Rocket") { shots.push({ k: "rocket", x: m[0], y: m[1], vx: dir[0] * sp * .45, vy: dir[1] * sp * .45, r: s * .25, life: 2, c: [255, 160, 60] }); sfx("whoosh"); return; }
+  if (kind === "Minigun") { const a = Math.atan2(dir[1], dir[0]) + rnd(-.05, .05); shots.push({ k: "bolt", x: m[0], y: m[1], vx: Math.cos(a) * sp * 1.2, vy: Math.sin(a) * sp * 1.2, r: s * .07, life: .6, c: [255, 210, 90] }); sfx("zap"); return; }
+  if (kind === "Rocket") { shots.push({ k: "rocket", x: m[0], y: m[1], vx: dir[0] * sp * .45, vy: dir[1] * sp * .45, r: s * .25, life: 2, c: [255, 160, 60], home: S.aim }); sfx("whoosh"); return; }
+  if (kind === "Grenade") { shots.push({ k: "bomb", type: "Bomb", x: m[0], y: m[1], vx: dir[0] * sp * .35, vy: dir[1] * sp * .35 - 300 * DPR, g: 1400 * DPR, r: s * .25, life: 1.4 }); sfx("whoosh"); return; }
+  if (kind === "Plasma") { shots.push({ k: "orb", power: 6, x: m[0], y: m[1], vx: dir[0] * sp * .4, vy: dir[1] * sp * .4, r: s * .35, life: 1.6, c: [200, 90, 255], pierce: true }); sfx("blast"); return; }
+  if (kind === "Flamethrower" || kind === "Water") {
+    const fireC = kind === "Water" ? [[60, 170, 255], [170, 225, 255]] : [[255, 90, 0], [255, 190, 40], [255, 240, 150]];
+    for (let i = 0; i < 3; i++) {
+      const a = Math.atan2(dir[1], dir[0]) + rnd(-.12, .12), v = sp * rnd(.25, .4);
+      particles.push({ x: m[0], y: m[1], vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: .45, max: .45, c: pick(fireC), r: s * rnd(.12, .22), g: kind === "Water" ? 500 * DPR : -60 * DPR });
+    }
+    const far = [m[0] + dir[0] * W * .35, m[1] + dir[1] * W * .35];
+    for (const t of targets.slice()) if (segDist([t.x, t.y], m, far) < t.r + s * .3) { t.burn = (t.burn || 0) + 1; if (t.burn > 10) { t.burn = 0; hit(t, fireC[0]); } }
+    return;
+  }
   if (kind === "Bubble") {
     for (let i = 0; i < 4; i++) shots.push({ k: "bubble", x: m[0], y: m[1], vx: dir[0] * sp * rnd(.15, .3) + rnd(-40, 40), vy: dir[1] * sp * rnd(.15, .3) + rnd(-40, 40), r: s * rnd(.15, .3), life: 2.5, c: [160, 230, 255] });
     sfx("pop"); return;
@@ -800,6 +861,14 @@ function updateShots(dt) {
     } else {
       if (s.g) s.vy += s.g * dt;
       if (s.k === "bubble") { s.vx += rnd(-80, 80) * dt; s.vy -= 30 * dt * DPR; }
+      if (s.home && targets.length) { // gently curve toward the nearest target
+        let best = null, bd = Infinity;
+        for (const t of targets) { const d = Math.hypot(t.x - s.x, t.y - s.y); if (d < bd) { bd = d; best = t; } }
+        if (best && bd < Math.min(W, H) * .6) {
+          const sp = Math.hypot(s.vx, s.vy) || 1, want = [(best.x - s.x) / bd * sp, (best.y - s.y) / bd * sp];
+          s.vx += (want[0] - s.vx) * Math.min(1, dt * 4); s.vy += (want[1] - s.vy) * Math.min(1, dt * 4);
+        }
+      }
       if (s.k === "firework") s.vy -= 900 * dt * DPR;
       s.x += s.vx * dt; s.y += s.vy * dt;
       if (s.k === "bomb" && s.y > H - s.r && s.vy > 0) { s.y = H - s.r; s.vy *= -.45; s.vx *= .7; }
@@ -816,7 +885,7 @@ function updateShots(dt) {
         continue;
       }
       if (s.k === "rocket") { done = true; break; }
-      hit(t, s.c); done = true; break;
+      hit(t, s.c); if (!s.pierce) { done = true; break; }
     }
     if (done) {
       if (s.k === "bomb") explode(Math.max(0, Math.min(W, s.x)), Math.max(0, Math.min(H, s.y)), s.type);
@@ -876,7 +945,7 @@ function updateParticles(dt) {
     ctx.strokeStyle = rgba([255, 255, 255], .8 * k); ctx.lineWidth = 2 * DPR; ctx.stroke();
   }
   rings = rings.filter(r => r.life > 0);
-  for (const b of beams) { b.life -= dt; glowLine(b.a, b.b, 6 * DPR * Math.max(.2, b.life / .18), b.c); }
+  for (const b of beams) { b.life -= dt; glowLine(b.a, b.b, (b.w || 6) * DPR * Math.max(.2, b.life / .2), b.c); }
   beams = beams.filter(b => b.life > 0);
   ctx.restore();
 }
@@ -884,6 +953,28 @@ function updateParticles(dt) {
 // =====================================================================
 // hand looks, trails, drawing
 // =====================================================================
+const BODY_CONN = [[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16],[0,1],[0,2],[1,3],[2,4]];
+const bodyF = new OneEuro();
+function drawBody() {
+  if (S.track !== 2 || !bodyRes || now - bodyT > 1.5) return;
+  const raw = []; for (const [x, y] of bodyRes) { const q = toPx(x, y); raw.push(q[0], q[1]); }
+  const sm = bodyF.filter(raw, now);
+  const P = i => [sm[i * 2], sm[i * 2 + 1]], ok = i => bodyRes[i][2] > .25;
+  const st = S.style || 3, w = [4, 7, 11][S.size] * DPR;
+  ctx.lineCap = "round";
+  for (const [a, b] of BODY_CONN) {
+    if (!ok(a) || !ok(b)) continue;
+    if (st === 3 || st === 4) glowLine(P(a), P(b), w, col("fx", a * 15));
+    else if (st !== 2) strokePath([P(a), P(b)], w, rgba(col("fx", a * 15)));
+  }
+  for (let i = 0; i < 17; i++) {
+    if (!ok(i)) continue;
+    const q = P(i);
+    if (st === 4 && [0, 9, 10, 15, 16].includes(i)) { ctx.save(); ctx.globalCompositeOperation = "lighter"; glowDot(q[0], q[1], w * 4, col("fx", i * 20), .9); ctx.restore(); }
+    else if (st === 5) { ctx.strokeStyle = rgba(col("fx", i * 15)); ctx.lineWidth = 2 * DPR; ctx.beginPath(); ctx.arc(q[0], q[1], w * 1.2 + Math.sin(now * 4 + i) * 3, 0, 6.283); ctx.stroke(); }
+    else { ctx.fillStyle = st === 2 ? rgba(col("fx", i * 15)) : "#fff"; ctx.beginPath(); ctx.arc(q[0], q[1], st === 2 ? w * 1.2 : w * .45, 0, 6.283); ctx.fill(); }
+  }
+}
 function drawHandLook(hd) {
   const st = S.style; if (!st) return;
   const p = hd.p, th = [3, 5, 8][S.size] * DPR, dot = [5, 8, 12][S.size] * DPR;
@@ -1180,7 +1271,7 @@ function handActions(dt) {
   // two fists close together = big weapon
   const fists = hands.filter(h => h.g === "Fist");
   let twoActive = false;
-  if (S.fist2 && fists.length === 2 && dist(fists[0].palm, fists[1].palm) < (fists[0].size + fists[1].size) * 1.4) {
+  if (S.fist2 && fists.length === 2 && dist(fists[0].palm, fists[1].palm) < (fists[0].size + fists[1].size) * 1.8) {
     twoActive = true;
     if (!twoWeapon) { twoWeapon = S.fist2 === 1 ? pick(TWO.slice(2)) : TWO[S.fist2]; twoTrail = []; sfx("slash"); toast(twoWeapon); }
     const [top, bot] = fists[0].palm[1] < fists[1].palm[1] ? fists : [fists[1], fists[0]];
@@ -1202,9 +1293,9 @@ function handActions(dt) {
     const want = {
       open: g === "Open" && S.open ? 1 : 0,
       guard: g === "Point up" && S.guard ? 1 : 0,
-      blast: (g === "Point" || (g === "Gun" && !S.gun)) && hd.right && S.blast && st.armed < now ? 1 : 0,
+      blast: (g === "Point" || (g === "Gun" && !S.gun)) && hd.right && S.blast && (S.trigger === 0 || st.armed < now) ? 1 : 0,
       fist: g === "Fist" && !twoActive && S.fist1 ? 1 : 0,
-      gun: (g === "Gun" || (g === "Point" && st.armed > now)) && S.gun ? 1 : 0,
+      gun: (g === "Gun" || (S.trigger === 1 && g === "Point" && st.armed > now)) && S.gun ? 1 : 0,
     };
     for (const k in A) A[k] += (want[k] - A[k]) * Math.min(1, dt * 12);
     st.throwCd = Math.max(0, st.throwCd - dt);
@@ -1220,10 +1311,10 @@ function handActions(dt) {
       const r = s * .55 * A.open * (1 + .08 * Math.sin(now * 10));
       if (S.open === 7) drawBomb(hd.palm[0], hd.palm[1] - s * .2, s * .45 * A.open, BOMBS[S.bomb]);
       else orb(hd.palm[0], hd.palm[1], r, powerCols(S.open), S.open);
-      if (flick && A.open > .8 && speed > s * 9) {
+      if (flick && A.open > .7 && speed > s * 5) {
         const v = [st.vel[0] * 1.4, st.vel[1] * 1.4];
         if (S.open === 7) shots.push({ k: "bomb", type: BOMBS[S.bomb], x: hd.palm[0], y: hd.palm[1], vx: v[0], vy: v[1], g: 1400 * DPR, r: s * .45, life: 1.6 });
-        else shots.push({ k: "orb", power: S.open, x: hd.palm[0], y: hd.palm[1], vx: v[0], vy: v[1], r: s * .5, life: 1.5, c: powerCols(S.open)[0] });
+        else shots.push({ k: "orb", power: S.open, x: hd.palm[0], y: hd.palm[1], vx: v[0], vy: v[1], r: s * .5, life: 1.5, c: powerCols(S.open)[0], home: S.aim });
         A.open = 0; st.throwCd = .4; sfx("whoosh");
       }
     }
@@ -1233,8 +1324,8 @@ function handActions(dt) {
       const at = [p[8][0], p[8][1] - s * .55];
       orb(at[0], at[1], r, GUARD, "guard");
       if (A.guard > .7) st.guardReadyAt = now;
-      if (flick && A.guard > .8 && tipSpeed > s * 9) {
-        shots.push({ k: "guard", x: at[0], y: at[1], vx: st.tipVel[0] * 1.5, vy: st.tipVel[1] * 1.5, r: s * .4, life: 1.6 });
+      if (flick && A.guard > .7 && tipSpeed > s * 5) {
+        shots.push({ k: "guard", x: at[0], y: at[1], vx: st.tipVel[0] * 1.5, vy: st.tipVel[1] * 1.5, r: s * .4, life: 1.6, home: S.aim });
         A.guard = 0; st.throwCd = .4; sfx("whoosh");
       }
     }
@@ -1247,8 +1338,8 @@ function handActions(dt) {
       const r = s * .38 * A.blast;
       const at = [p[8][0] + (p[8][0] - p[7][0]) * .8, p[8][1] + (p[8][1] - p[7][1]) * .8];
       orb(at[0], at[1], r, BLAST, "blast");
-      if (st.newRes && A.blast > .6 && tipSpeed > s * 8 && st.throwCd === 0) {
-        shots.push({ k: "blast", x: at[0], y: at[1], vx: st.tipVel[0] * 1.8, vy: st.tipVel[1] * 1.8, r: s * .4, life: 1.4, c: BLAST[0] });
+      if (st.newRes && A.blast > .5 && tipSpeed > s * 4.5 && st.throwCd === 0) {
+        shots.push({ k: "blast", x: at[0], y: at[1], vx: st.tipVel[0] * 1.8, vy: st.tipVel[1] * 1.8, r: s * .4, life: 1.4, c: BLAST[0], home: S.aim });
         A.blast = .3; st.throwCd = .15; sfx("blast");
       }
     }
@@ -1258,7 +1349,10 @@ function handActions(dt) {
       st.gunCd = Math.max(0, st.gunCd - dt);
       const recoil = Math.max(0, st.gunCd - .1) * 2;
       const gn = drawGun(hd, GUNS[S.gun], recoil);
-      if (g === "Point" && st.lastG === "Gun" && st.gunCd === 0) { fire(GUNS[S.gun], gn.muzzle, gn.dir, s); st.gunCd = .25; }
+      const kind = GUNS[S.gun];
+      const pulled = S.trigger === 0 ? g === "Gun" && A.gun > .6 : g === "Point" && st.lastG === "Gun";
+      if ((pulled || st.wantFire) && st.gunCd === 0) { fire(kind, gn.muzzle, st.wantFire || gn.dir, s); st.gunCd = GUN_RATE[kind] || .25; }
+      st.wantFire = null; hd.gun = gn;
     }
     // one fist weapon
     if (A.fist > .05 && S.fist1) {
@@ -1429,16 +1523,17 @@ const TABS = [["look", "Look"], ["powers", "Powers"], ["weapons", "Weapons"], ["
 const OFFON = ["Off", "On"];
 function rowsFor(tab) {
   if (tab === "look") return [
+    ["Track", "track", ["One hand", "Both hands", "Whole body"]],
     ["Look", "style", ["Off", "Skeleton", "Dots", "Neon", "Tips", "Bubbles"]],
     ["Size", "size", ["Small", "Medium", "Large"]], ["Glow", "glow", ["Low", "Medium", "High"]],
     ["Smooth", "smooth", ["Off", "Normal", "Extra"]], ["Trails", "trails", OFFON], ["Sparkles", "sparkles", OFFON]];
   if (tab === "powers") return [
     ["Open hand", "open", OPEN], ["Point up", "guard", ["Off", "Guard orb"]], ["Right point", "blast", ["Off", "Blast orb"]],
-    ["Throwing", "throw", OFFON], ["Clap blast", "clap", OFFON], ["Power color", "pcolor", ["Natural", "My color"]],
-    ["info", "Flick your open hand to throw. Point up and flick to put a shield on a target, or close your fist to shield yourself. Flick your right pointing finger to spam blast orbs."]];
+    ["Throwing", "throw", OFFON], ["Aim help", "aim", OFFON], ["Clap blast", "clap", OFFON], ["Power color", "pcolor", ["Natural", "My color"]],
+    ["info", "Easy way: hold a power, then click where you want it to go (or press Space). Or flick your hand. Point up = guard orb (close your fist to shield yourself). Right hand point = blast orb. Aim help steers shots toward targets."]];
   if (tab === "weapons") return [
-    ["Two fists", "fist2", TWO], ["One fist", "fist1", ONE], ["Finger gun", "gun", GUNS], ["Bomb", "bomb", BOMBS],
-    ["info", "Hold two fists together like a handle. For the gun: thumb up and point, then drop your thumb to shoot. To use bombs, pick Bomb under Powers > Open hand."]];
+    ["Two fists", "fist2", TWO], ["One fist", "fist1", ONE], ["Finger gun", "gun", GUNS], ["Trigger", "trigger", ["Auto fire", "Drop thumb"]], ["Bomb", "bomb", BOMBS],
+    ["info", "Two fists together like a handle = big weapon (Track must be Both hands). Finger gun: thumb up and point. Auto fire shoots by itself, or click to shoot where you click. Bombs: pick Bomb under Powers > Open hand."]];
   if (tab === "world") return [
     ["World", "world", worldNames(), "name"], ["Your photo", "!photo", ["Add a photo"], "act"],
     ["Camera", "filter", ["Normal", "Dark", "Shadow", "Comic", "Thermal", "B&W", "Dream"]],
@@ -1590,8 +1685,30 @@ try {
 
 // tap targets / finger drawing on screen
 let touchPen = null;
+function launchAll(target) {
+  // throw or shoot from every hand that is holding something; target = the clicked point, or null for Space
+  let did = false;
+  for (const hd of hands) {
+    const st = hd.st, A = st.a, s = hd.size;
+    const from = A.guard > .5 ? [hd.p[8][0], hd.p[8][1] - s * .55] : A.gun > .5 && hd.gun ? hd.gun.muzzle : hd.palm;
+    let dir = target ? [target[0] - from[0], target[1] - from[1]] : [0, -1];
+    const n = Math.hypot(...dir) || 1; dir = [dir[0] / n, dir[1] / n];
+    if (!target) dir = aimAssist(from, [0, -1]);
+    const v = Math.min(W, H) * 1.6;
+    if (A.gun > .5 && S.gun) { st.wantFire = dir; st.gunCd = 0; did = true; }
+    else if (A.open > .5 && S.open) {
+      if (S.open === 7) shots.push({ k: "bomb", type: BOMBS[S.bomb], x: from[0], y: from[1], vx: dir[0] * v * .6, vy: dir[1] * v * .6 - 300 * DPR, g: 1400 * DPR, r: s * .45, life: 1.6 });
+      else shots.push({ k: "orb", power: S.open, x: from[0], y: from[1], vx: dir[0] * v, vy: dir[1] * v, r: s * .5, life: 1.5, c: powerCols(S.open)[0], home: S.aim && !target });
+      A.open = 0; st.throwCd = .3; sfx("whoosh"); did = true;
+    } else if (A.guard > .5 && S.guard) { shots.push({ k: "guard", x: from[0], y: from[1], vx: dir[0] * v, vy: dir[1] * v, r: s * .4, life: 1.6 }); A.guard = 0; sfx("whoosh"); did = true; }
+    else if (A.blast > .3 && S.blast) { shots.push({ k: "blast", x: from[0], y: from[1], vx: dir[0] * v, vy: dir[1] * v, r: s * .4, life: 1.4, c: BLAST[0] }); sfx("blast"); did = true; }
+  }
+  return did;
+}
+addEventListener("keydown", e => { if (e.code === "Space" && document.getElementById("start").hidden) { e.preventDefault(); launchAll(null); } });
 cv.addEventListener("pointerdown", e => {
   audioInit();
+  if (!S.touchdraw && launchAll([e.clientX * W / innerWidth, e.clientY * H / innerHeight])) return;
   if (S.tab) { S.tab = ""; renderSheet(); }
   const x = e.clientX * W / innerWidth, y = e.clientY * H / innerHeight;
   if (S.touchdraw) { pushUndo(); touchPen = [x, y]; cv.setPointerCapture(e.pointerId); return; }
@@ -1741,6 +1858,7 @@ function loop(t) {
   safe("drawing", () => ctx.drawImage(drawLayer, 0, 0));
   safe("targets", () => { updateTargets(dt); drawTargets(); });
   safe("avatar", drawAvatar);
+  safe("body", drawBody);
   safe("looks", () => { for (const hd of hands) drawHandLook(hd); });
   safe("actions", () => handActions(dt));
   safe("black holes", () => updateHoles(dt));
